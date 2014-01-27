@@ -1,4 +1,5 @@
 require 'multi_json'
+require 'date'
 module APNS
   class Notification
     attr_accessor :device_token, :alert, :badge, :sound, :other
@@ -21,7 +22,7 @@ module APNS
       pt = self.packaged_token
       pm = self.packaged_message
       pm_packed = [pm].pack('a*')
-      [1, index, (Time.now+1.year).to_i, 0, 32, pt, pm_packed.bytesize, pm].pack("cNNccH*na*")
+      [1, index, (DateTime.now >> 12).to_time.to_i, 0, 32, pt, pm_packed.bytesize, pm].pack("cNNccH*na*")
     end
 
     def packaged_token
