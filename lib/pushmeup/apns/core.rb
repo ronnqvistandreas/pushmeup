@@ -23,7 +23,10 @@ module APNS
   def self.send_notifications(notifications, errors=[])
     sock, ssl = self.open_connection
     notifications.each_with_index do |n, index|
-      ssl.write(n.packaged_notification(index))
+      begin
+        ssl.write(n.packaged_notification(index))
+      rescue
+      end
     end
     process_error_response(ssl, notifications, errors)
     ssl.close
