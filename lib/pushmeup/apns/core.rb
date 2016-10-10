@@ -11,8 +11,26 @@ module APNS
   @pass = nil
   @errors = []
   
+  @persistent = false
+  @mutex = Mutex.new
+  @retries = 3 # TODO: check if we really need this
+  
+  @sock = nil
+  @ssl = nil
+  
   class << self
     attr_accessor :host, :pem, :port, :pass, :errors
+  end
+  
+  def self.start_persistence
+    @persistent = true
+  end
+  
+  def self.stop_persistence
+    @persistent = false
+    
+    @ssl.close
+    @sock.close
   end
   
   def self.send_notification(device_token, message)
@@ -20,17 +38,17 @@ module APNS
     self.send_notifications([n])
   end
   
-  def self.send_notifications(notifications, errors=[])
-    sock, ssl = self.open_connection
-    notifications.each_with_index do |n, index|
-      begin
-        ssl.write(n.packaged_notification(index))
-      rescue
+  def self.send_notifications(notifications)
+    @mutex.synchronize do
+      self.with_connection do
+        notifications.each do |n|
+          begin
+            @ssl.write(n.packaged_notification)
+          rescue
+          end
+        end
       end
     end
-    process_error_response(ssl, notifications, errors)
-    ssl.close
-    sock.close
   end
 
   def self.process_error_response(ssl, notifications, errors=[])
@@ -63,8 +81,38 @@ module APNS
     return apns_feedback
   end
   
-  protected
-
+protected
+  
+  def self.with_connection
+    attempts = 1
+  
+    begin      
+      # If no @ssl is created or if @ssl is closed we need to start it
+      if @ssl.nil? || @sock.nil? || @ssl.closed? || @sock.closed?
+        @sock, @ssl = self.open_connection
+      end
+    
+      yield
+    
+    rescue StandardError, Errno::EPIPE
+      raise unless attempts < @retries
+    
+      @ssl.close
+      @sock.close
+    
+      attempts += 1
+      retry
+    end
+  
+    # Only force close if not persistent
+    unless @persistent
+      @ssl.close
+      @ssl = nil
+      @sock.close
+      @sock = nil
+    end
+  end
+  
   def self.open_connection
     raise "The path to your pem file is not set. (APNS.pem = /path/to/cert.pem)" unless self.pem
     raise "The path to your pem file does not exist!" unless File.exist?(self.pem)
@@ -89,7 +137,6 @@ module APNS
     context.key  = OpenSSL::PKey::RSA.new(File.read(self.pem), self.pass)
     
     fhost = self.host.gsub('gateway','feedback')
-    puts fhost
     
     sock         = TCPSocket.new(fhost, 2196)
     ssl          = OpenSSL::SSL::SSLSocket.new(sock, context)
